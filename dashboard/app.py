@@ -96,7 +96,8 @@ with tab_overview:
     reg = kpis.by_dimension(df, "region")
     left.plotly_chart(px.bar(reg, x="region", y="net_revenue", text="share_pct",
                              labels={"net_revenue": "Net revenue (₹)", "region": ""},
-                             title="Revenue by region (% share)"), width="stretch")
+                             title="Revenue by region (% share)")
+                      .update_traces(texttemplate="%{text}%"), width="stretch")
     ch = kpis.by_dimension(df, "channel")
     right.plotly_chart(px.pie(ch, names="channel", values="net_revenue", hole=0.45,
                               title="Revenue by channel"), width="stretch")
@@ -132,6 +133,7 @@ with tab_customers:
     right.plotly_chart(px.scatter(rfm_view.sample(min(1500, len(rfm_view)), random_state=1),
                                   x="recency_days", y="monetary", color="segment",
                                   size="frequency", log_y=True, opacity=0.7,
+                                  category_orders={"segment": rfm.SEGMENT_ORDER},
                                   labels={"recency_days": "Days since last purchase",
                                           "monetary": "Net revenue (₹, log)"},
                                   title="Recency vs value"), width="stretch")
