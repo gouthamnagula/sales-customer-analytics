@@ -132,25 +132,35 @@ def make_customers(rng, n):
     return df, hidden
 
 
-def make_orders(rng, customers, hidden, products, popularity, n_orders):
-    # pick customer first, then a date inside that customer's active window
-    m = n_orders * 3
-    idx = rng.choice(len(customers), m, p=hidden["weight"] / hidden["weight"].sum())
-    lo = hidden["signup"].to_numpy()[idx]
-    lo = np.maximum(lo, START.to_datetime64())
-    hi = hidden["last_active"].to_numpy()[idx]
-    ok = hi > lo
-    idx, lo, hi = idx[ok], lo[ok], hi[ok]
-    span_days = ((hi - lo) / np.timedelta64(1, "D")).astype(int)
-    dates = pd.to_datetime(lo) + pd.to_timedelta((rng.random(len(idx)) * span_days).astype(int), unit="D")
+def make_orders(rng, customers, hidden, products, popularity, n_orders, growth=0.15):
+    # month by month: decide how many orders the month gets (seasonality + yearly
+    # growth), then pick them only from customers active in that month.
+    # (first version picked customer first and the volume kept piling up with
+    # signups - gave >100% yoy growth, not realistic)
+    signup = hidden["signup"].to_numpy()
+    last_active = hidden["last_active"].to_numpy()
+    weight = hidden["weight"].to_numpy()
 
-    # seasonality + slow growth over time (accept/reject)
-    years = (dates - START).days / 365.0
-    w = dates.month.map(MONTH_WEIGHT).to_numpy() * (1 + 0.22 * years)
-    keep = rng.random(len(w)) < w / w.max()
-    idx, dates = idx[keep][:n_orders], dates[keep][:n_orders]
+    months = pd.period_range(START, END, freq="M")
+    years = np.array([(m.start_time - START).days / 365.0 for m in months])
+    month_w = np.array([MONTH_WEIGHT[m.month] for m in months]) * (1 + growth) ** years
+    per_month = np.round(n_orders * month_w / month_w.sum()).astype(int)
 
-    orders = pd.DataFrame({"customer_idx": idx, "order_date": dates}).sort_values("order_date")
+    idx_all, dates_all = [], []
+    for m, k in zip(months, per_month):
+        ms, me = m.start_time.to_datetime64(), m.end_time.normalize().to_datetime64()
+        active = np.flatnonzero((signup <= me) & (last_active >= ms))
+        idx = rng.choice(active, k, p=weight[active] / weight[active].sum())
+        lo = np.maximum(signup[idx], ms)
+        hi = np.minimum(last_active[idx], me)
+        span = ((hi - lo) / np.timedelta64(1, "D")).astype(int) + 1
+        days = (rng.random(k) * span).astype(int)
+        idx_all.append(idx)
+        dates_all.append(lo + days.astype("timedelta64[D]"))
+
+    orders = pd.DataFrame({"customer_idx": np.concatenate(idx_all),
+                           "order_date": pd.to_datetime(np.concatenate(dates_all))})
+    orders = orders.sort_values("order_date", kind="stable").reset_index(drop=True)
     orders["order_id"] = [f"SO{i:06d}" for i in range(100001, 100001 + len(orders))]
     orders["channel"] = rng.choice(["Online", "Store", "Marketplace"], len(orders), p=[0.5, 0.3, 0.2])
 
